@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>呼吸负压监测</title>
+  
+  <!-- 引入图标库（推荐） -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+
+  <style>
+    /* 全局样式 - 深色科技感仪表盘风格 */
+    body {
+      margin: 0; padding: 16px;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      font-family: 'Segoe UI', 'Roboto', sans-serif;
+      color: #e2e8f0;
+      box-sizing: border-box;
+    }
+    .container {
+      width: 100%; max-width: 400px;
+      background: rgba(30, 41, 59, 0.8);
+      backdrop-filter: blur(10px);
+      border-radius: 32px; padding: 24px 20px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1);
+    }
+    .title {
+      text-align: center; font-size: 1.15rem;
+      font-weight: 600; color: #94a3b8; letter-spacing: 2px;
+      margin-bottom: 8px; text-transform: uppercase;
+    }
+    .device-icon {
+      text-align: center; font-size: 2.8rem;
+      color: #22d3ee; margin-bottom: 12px;
+    }
+    .pressure-card {
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 24px; padding: 20px;
+      text-align: center; margin-bottom: 20px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .pressure-value {
+      font-size: 4.5rem; font-weight: 700;
+      color: #ffffff; letter-spacing: -1px;
+      line-height: 1.2; font-variant-numeric: tabular-nums;
+    }
+    .pressure-unit {
+      font-size: 1.8rem; color: #22d3ee;
+      margin-left: 4px; font-weight: 500;
+    }
+    .status-badge {
+      display: inline-flex; align-items: center;
+      gap: 6px; padding: 6px 16px;
+      border-radius: 20px; font-size: 0.85rem;
+      font-weight: 600; margin-top: 10px;
+    }
+    .connected { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+    .disconnected { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    .button-group {
+      display: flex; gap: 10px; margin-bottom: 16px;
+    }
+    .unit-btn {
+      flex: 1; padding: 14px 8px;
+      background: rgba(51, 65, 85, 0.6);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px; color: #cbd5e1;
+      font-size: 0.95rem; font-weight: 600;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .unit-btn.active {
+      background: #22d3ee; color: #0f172a;
+      border-color: #22d3ee; box-shadow: 0 0 16px rgba(34,211,238,0.4);
+    }
+    .action-btn {
+      width: 100%; padding: 16px;
+      background: #2563eb; color: white;
+      border: none; border-radius: 16px;
+      font-size: 1.1rem; font-weight: 700;
+      cursor: pointer; transition: all 0.2s;
+      display: flex; align-items: center; justify-content: center;
+      gap: 8px;
+    }
+    .action-btn:active { background: #1d4ed8; transform: scale(0.98); }
+    .action-btn:disabled { background: #475569; color: #94a3b8; }
+    .sensor-badge {
+      display: flex; justify-content: center; gap: 8px;
+      margin-top: 12px; font-size: 0.7rem; color: #64748b;
+    }
+    .log-panel {
+      background: rgba(15, 23, 42, 0.8); border-radius: 12px;
+      padding: 10px; margin-top: 16px;
+      max-height: 120px; overflow-y: auto;
+      font-size: 0.7rem; color: #64748b;
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="title">呼吸负压检测系统</div>
+    <div class="device-icon">
+      <i class="fas fa-lungs"></i>
+    </div>
+
+    <div class="pressure-card">
+      <div style="display: flex; align-items: baseline; justify-content: center;">
+        <span class="pressure-value" id="pressureValue">----</span>
+        <span class="pressure-unit" id="pressureUnit">inH₂O</span>
+      </div>
+      <div id="connectionBadge" class="status-badge disconnected">
+        <i class="fas fa-circle"></i> 未连接
+      </div>
+    </div>
+
+    <div class="button-group">
+      <button class="unit-btn active" data-unit="0">
+        <i class="fas fa-tint"></i> inH₂O
+      </button>
+      <button class="unit-btn" data-unit="1">
+        <i class="fas fa-wind"></i> Pa
+      </button>
+      <button class="unit-btn" data-unit="2">
+        <i class="fas fa-ruler"></i> cmH₂O
+      </button>
+    </div>
+
+    <button id="connectButton" class="action-btn">
+      <i class="fas fa-bluetooth-b"></i> 连接设备
+    </button>
+
+    <div class="sensor-badge">
+      <span><i class="fas fa-microchip"></i> SSCMJJN002ND2A3</span>
+      <span>·</span>
+      <span><i class="fab fa-bluetooth-b"></i> BLE 5.0</span>
+    </div>
+
+    <div class="log-panel" id="logPanel">
+      <div>💡 提示：点击“连接设备”搜索蓝牙</div>
+    </div>
+  </div>
+
+  <script>
+    // ==================== 配置 ====================
+    const SERVICE_UUID = "0000181a-0000-1000-8000-00805f9b34fb";
+    const CHAR_PRESSURE_UUID = "00002a6d-0000-1000-8000-00805f9b34fb";
+    const CHAR_UNIT_UUID = "00002a6e-0000-1000-8000-00805f9b34fb";
+
+    const UNIT_LABELS = {
+      0: { name: 'inH₂O', icon: 'fa-tint' },
+      1: { name: 'Pa', icon: 'fa-wind' },
+      2: { name: 'cmH₂O', icon: 'fa-ruler' }
+    };
+
+    let bluetoothDevice = null;
+    let pressureCharacteristic = null;
+    let unitCharacteristic = null;
+    let isConnected = false;
+
+    // ==================== UI 元素 ====================
+    const connectButton = document.getElementById('connectButton');
+    const pressureValueEl = document.getElementById('pressureValue');
+    const pressureUnitEl = document.getElementById('pressureUnit');
+    const connectionBadge = document.getElementById('connectionBadge');
+    const logPanel = document.getElementById('logPanel');
+    const unitButtons = document.querySelectorAll('.unit-btn');
+
+    // ==================== 日志函数 ====================
+    function addLog(message) {
+      const logEntry = document.createElement('div');
+      logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      logPanel.prepend(logEntry);
+      // 保留最近10条
+      while (logPanel.children.length > 10) logPanel.removeChild(logPanel.lastChild);
+    }
+
+    // ==================== 连接/断开 ====================
+    connectButton.addEventListener('click', async () => {
+      if (isConnected) {
+        await disconnectDevice();
+        return;
+      }
+      await connectDevice();
+    });
+
+    async function connectDevice() {
+      try {
+        addLog('🔍 正在搜索设备...');
+        bluetoothDevice = await navigator.bluetooth.requestDevice({
+          filters: [{ name: 'RESP-MONITOR' }],
+          optionalServices: [SERVICE_UUID]
+        });
+
+        addLog(`📱 已找到: ${bluetoothDevice.name}`);
+        const server = await bluetoothDevice.gatt.connect();
+        addLog('🔗 已连接，正在获取服务...');
+
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        
+        // 获取压力特性（通知）
+        pressureCharacteristic = await service.getCharacteristic(CHAR_PRESSURE_UUID);
+        await pressureCharacteristic.startNotifications();
+        pressureCharacteristic.addEventListener('characteristicvaluechanged', handlePressureData);
+        
+        // 获取单位特性（读写）
+        unitCharacteristic = await service.getCharacteristic(CHAR_UNIT_UUID);
+        
+        // 读取当前单位
+        const unitData = await unitCharacteristic.readValue();
+        const currentUnit = unitData.getUint8(0);
+        updateUnitButtons(currentUnit);
+        
+        isConnected = true;
+        updateConnectionUI();
+        addLog('✅ 连接成功，实时接收数据中...');
+
+        bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnect);
+      } catch (error) {
+        addLog(`❌ 连接失败: ${error.message}`);
+        console.error(error);
+      }
+    }
+
+    async function disconnectDevice() {
+      if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+        await bluetoothDevice.gatt.disconnect();
+      }
+      onDisconnect();
+    }
+
+    function onDisconnect() {
+      isConnected = false;
+      pressureCharacteristic = null;
+      unitCharacteristic = null;
+      bluetoothDevice = null;
+      updateConnectionUI();
+      pressureValueEl.textContent = '----';
+      addLog('⚠️ 设备已断开');
+    }
+
+    // ==================== 数据处理 ====================
+    function handlePressureData(event) {
+      const value = event.target.value;
+      // 4字节 float (小端)
+      const buffer = value.buffer;
+      const floatValue = new Float32Array(buffer)[0];
+      
+      // 根据当前单位决定显示精度
+      const activeUnit = document.querySelector('.unit-btn.active')?.dataset.unit || '0';
+      let displayValue;
+      if (activeUnit === '1') { // Pa 通常数值较大，1位小数
+        displayValue = floatValue.toFixed(1);
+      } else {
+        displayValue = floatValue.toFixed(3);
+      }
+      pressureValueEl.textContent = displayValue;
+    }
+
+    // ==================== 单位切换 ====================
+    unitButtons.forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const unitValue = parseInt(btn.dataset.unit);
+        updateUnitButtons(unitValue);
+        
+        if (unitCharacteristic) {
+          try {
+            const buffer = new ArrayBuffer(1);
+            const view = new DataView(buffer);
+            view.setUint8(0, unitValue);
+            await unitCharacteristic.writeValue(buffer);
+            
+            const label = UNIT_LABELS[unitValue]?.name || 'inH₂O';
+            pressureUnitEl.textContent = label;
+            addLog(`⚙️ 单位已切换为: ${label}`);
+          } catch (error) {
+            addLog(`❌ 单位切换失败: ${error.message}`);
+          }
+        } else {
+          // 未连接时只切换本地显示
+          pressureUnitEl.textContent = UNIT_LABELS[unitValue]?.name || 'inH₂O';
+        }
+      });
+    });
+
+    function updateUnitButtons(activeValue) {
+      unitButtons.forEach(btn => {
+        const val = parseInt(btn.dataset.unit);
+        btn.classList.toggle('active', val === activeValue);
+      });
+      const label = UNIT_LABELS[activeValue]?.name || 'inH₂O';
+      pressureUnitEl.textContent = label;
+    }
+
+    function updateConnectionUI() {
+      if (isConnected) {
+        connectButton.innerHTML = '<i class="fas fa-power-off"></i> 断开连接';
+        connectButton.classList.add('connected-state');
+        connectionBadge.innerHTML = '<i class="fas fa-circle"></i> 已连接';
+        connectionBadge.className = 'status-badge connected';
+      } else {
+        connectButton.innerHTML = '<i class="fas fa-bluetooth-b"></i> 连接设备';
+        connectButton.classList.remove('connected-state');
+        connectionBadge.innerHTML = '<i class="fas fa-circle"></i> 未连接';
+        connectionBadge.className = 'status-badge disconnected';
+      }
+    }
+
+    addLog('✅ 页面就绪，请点击连接按钮');
+  </script>
+</body>
+</html>
