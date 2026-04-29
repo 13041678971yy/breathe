@@ -4,12 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>呼吸负压监测</title>
-  
-  <!-- 引入图标库（推荐） -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-
   <style>
-    /* 全局样式 - 深色科技感仪表盘风格 */
     body {
       margin: 0; padding: 16px;
       background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
@@ -39,7 +35,7 @@
     .pressure-card {
       background: rgba(15, 23, 42, 0.6);
       border-radius: 24px; padding: 20px;
-      text-align: center; margin-bottom: 20px;
+      text-align: center; margin-bottom: 16px;
       border: 1px solid rgba(255,255,255,0.1);
     }
     .pressure-value {
@@ -59,6 +55,21 @@
     }
     .connected { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
     .disconnected { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+
+    .chart-container {
+      margin-bottom: 16px;
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 20px;
+      padding: 10px;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: transparent;
+    }
+
     .button-group {
       display: flex; gap: 10px; margin-bottom: 16px;
     }
@@ -91,7 +102,7 @@
     }
     .log-panel {
       background: rgba(15, 23, 42, 0.8); border-radius: 12px;
-      padding: 10px; margin-top: 16px;
+      padding: 10px; margin-top: 12px;
       max-height: 120px; overflow-y: auto;
       font-size: 0.7rem; color: #64748b;
       border: 1px solid rgba(255,255,255,0.05);
@@ -113,6 +124,10 @@
       <div id="connectionBadge" class="status-badge disconnected">
         <i class="fas fa-circle"></i> 未连接
       </div>
+    </div>
+
+    <div class="chart-container">
+      <canvas id="pressureChart" width="340" height="160"></canvas>
     </div>
 
     <div class="button-group">
@@ -143,7 +158,7 @@
   </div>
 
   <script>
-    // ==================== 配置 ====================
+    // ==================== BLE 配置 ====================
     const SERVICE_UUID = "550e8400-e29b-41d4-a716-446655440000";
     const CHAR_PRESSURE_UUID = "550e8400-e29b-41d4-a716-446655440001";
     const CHAR_UNIT_UUID = "550e8400-e29b-41d4-a716-446655440002";
@@ -153,26 +168,153 @@
       2: { name: 'cmH₂O', icon: 'fa-ruler' }
     };
 
+    // ==================== 全局状态 ====================
     let bluetoothDevice = null;
     let pressureCharacteristic = null;
     let unitCharacteristic = null;
     let isConnected = false;
+    let currentUnit = 0;
+    let latestPressure = 0.0;
+    let dataBuffer = [];                     // { value, timestamp }
+    const MAX_POINTS = 60;
 
-    // ==================== UI 元素 ====================
+    // UI 元素
     const connectButton = document.getElementById('connectButton');
     const pressureValueEl = document.getElementById('pressureValue');
     const pressureUnitEl = document.getElementById('pressureUnit');
     const connectionBadge = document.getElementById('connectionBadge');
     const logPanel = document.getElementById('logPanel');
     const unitButtons = document.querySelectorAll('.unit-btn');
+    const canvas = document.getElementById('pressureChart');
+    const ctx = canvas.getContext('2d');
 
-    // ==================== 日志函数 ====================
-    function addLog(message) {
-      const logEntry = document.createElement('div');
-      logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-      logPanel.prepend(logEntry);
-      // 保留最近10条
+    // ==================== 日志 ====================
+    function addLog(msg) {
+      const div = document.createElement('div');
+      div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logPanel.prepend(div);
       while (logPanel.children.length > 10) logPanel.removeChild(logPanel.lastChild);
+    }
+
+    // ==================== 重点监测区间（基于 inH₂O） ====================
+    const ALERT_RANGE_INH2O = { min: -0.225, max: -0.185 };   // inH₂O 下的区间
+    function getAlertRangeForUnit(unit) {
+      // 将 inH₂O 区间转换为当前单位
+      if (unit === 0) return ALERT_RANGE_INH2O;                // inH₂O
+      else if (unit === 1) return { min: ALERT_RANGE_INH2O.min * 249.089, max: ALERT_RANGE_INH2O.max * 249.089 }; // Pa
+      else if (unit === 2) return { min: ALERT_RANGE_INH2O.min * 2.54, max: ALERT_RANGE_INH2O.max * 2.54 };     // cmH₂O
+    }
+
+    // ==================== 曲线绘制 ====================
+    function drawChart() {
+      const w = canvas.width, h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, w, h);
+
+      if (dataBuffer.length < 2) return;
+
+      const values = dataBuffer.map(d => d.value);
+      let min = Math.min(...values);
+      let max = Math.max(...values);
+      const pad = (max - min) * 0.2 || 1;
+      min -= pad; max += pad;
+
+      const margin = { top: 10, right: 15, bottom: 25, left: 45 };
+      const pw = w - margin.left - margin.right;
+      const ph = h - margin.top - margin.bottom;
+
+      // ---- 绘制重点监测区间（半透明红色高亮） ----
+      const alertRange = getAlertRangeForUnit(currentUnit);
+      // 只有当高亮区间与当前可视范围有交集时才绘制
+      if (alertRange.min < max && alertRange.max > min) {
+        const yMin = margin.top + ph - ((alertRange.max - min) / (max - min)) * ph;
+        const yMax = margin.top + ph - ((alertRange.min - min) / (max - min)) * ph;
+        const yTop = Math.min(yMin, yMax);
+        const yHeight = Math.abs(yMax - yMin);
+
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.2)';   // 半透明红色
+        ctx.fillRect(margin.left, yTop, pw, yHeight);
+
+        // 可选：在区间上下边界画虚线
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.8)';
+        ctx.setLineDash([4, 4]);
+        [yMin, yMax].forEach(y => {
+          ctx.beginPath();
+          ctx.moveTo(margin.left, y);
+          ctx.lineTo(w - margin.right, y);
+          ctx.stroke();
+        });
+        ctx.setLineDash([]); // 重置为实线
+      }
+
+      // ---- 网格和 Y 轴刻度 ----
+      ctx.strokeStyle = '#334155';
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '9px monospace';
+      const ySteps = 3;
+      for (let i = 0; i <= ySteps; i++) {
+        const y = margin.top + (ph / ySteps) * i;
+        ctx.beginPath();
+        ctx.moveTo(margin.left, y);
+        ctx.lineTo(w - margin.right, y);
+        ctx.stroke();
+        const val = max - (i / ySteps) * (max - min);
+        ctx.fillText(val.toFixed(1), 2, y + 3);
+      }
+
+      // ---- X 轴时间标签 ----
+      const xLabels = 3;
+      for (let i = 0; i <= xLabels; i++) {
+        const idx = Math.floor((dataBuffer.length - 1) * (i / xLabels));
+        const x = margin.left + (pw / xLabels) * i;
+        const sec = Math.round((Date.now() - dataBuffer[idx].timestamp) / 1000);
+        ctx.fillText(`${sec}s`, x - 10, h - 5);
+      }
+
+      // ---- 曲线 ----
+      ctx.beginPath();
+      ctx.strokeStyle = '#22d3ee';
+      ctx.lineWidth = 2;
+      ctx.shadowColor = '#22d3ee';
+      ctx.shadowBlur = 3;
+      for (let i = 0; i < dataBuffer.length; i++) {
+        const x = margin.left + (i / (dataBuffer.length - 1)) * pw;
+        const val = dataBuffer[i].value;
+        const y = margin.top + ph - ((val - min) / (max - min)) * ph;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // ---- 最新数据点 ----
+      const last = dataBuffer[dataBuffer.length - 1];
+      const lx = margin.left + pw;
+      const ly = margin.top + ph - ((last.value - min) / (max - min)) * ph;
+      ctx.beginPath();
+      ctx.arc(lx, ly, 4, 0, 2 * Math.PI);
+      ctx.fillStyle = '#22d3ee';
+      ctx.fill();
+    }
+
+    // ==================== 数据处理 ====================
+    function handlePressureData(event) {
+      const raw = event.target.value.buffer;
+      const val = new Float32Array(raw)[0];   // ESP32 直接发送的数值，无二次转换
+      latestPressure = val;
+
+      dataBuffer.push({ value: val, timestamp: Date.now() });
+      if (dataBuffer.length > MAX_POINTS) dataBuffer.shift();
+
+      // 显示数字（精度适配单位）
+      if (currentUnit === 1) {
+        pressureValueEl.textContent = val.toFixed(1);
+      } else {
+        pressureValueEl.textContent = val.toFixed(3);
+      }
+
+      drawChart();
     }
 
     // ==================== 连接/断开 ====================
@@ -188,43 +330,36 @@
       try {
         addLog('🔍 正在搜索设备...');
         bluetoothDevice = await navigator.bluetooth.requestDevice({
-          //filters: [{ name: 'RESP-MONITOR' }],
-          filters: [{ name: 'OxyMaster' }],  // 这里必须和 ESP32 里的名称一模一样
+          filters: [{ name: 'OxyMaster' }],
           optionalServices: [SERVICE_UUID]
         });
-
         addLog(`📱 已找到: ${bluetoothDevice.name}`);
         const server = await bluetoothDevice.gatt.connect();
         addLog('🔗 已连接，正在获取服务...');
 
         const service = await server.getPrimaryService(SERVICE_UUID);
-        
-        // 获取压力特性（通知）
         pressureCharacteristic = await service.getCharacteristic(CHAR_PRESSURE_UUID);
         await pressureCharacteristic.startNotifications();
         pressureCharacteristic.addEventListener('characteristicvaluechanged', handlePressureData);
-        
-        // 获取单位特性（读写）
+
         unitCharacteristic = await service.getCharacteristic(CHAR_UNIT_UUID);
-        
-        // 读取当前单位
         const unitData = await unitCharacteristic.readValue();
-        const currentUnit = unitData.getUint8(0);
+        currentUnit = unitData.getUint8(0);
         updateUnitButtons(currentUnit);
-        
+        pressureUnitEl.textContent = UNIT_LABELS[currentUnit]?.name || 'inH₂O';
+
         isConnected = true;
         updateConnectionUI();
         addLog('✅ 连接成功，实时接收数据中...');
-
         bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnect);
-      } catch (error) {
-        addLog(`❌ 连接失败: ${error.message}`);
-        console.error(error);
+      } catch (err) {
+        addLog(`❌ 连接失败: ${err.message}`);
+        console.error(err);
       }
     }
 
     async function disconnectDevice() {
-      if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+      if (bluetoothDevice?.gatt.connected) {
         await bluetoothDevice.gatt.disconnect();
       }
       onDisconnect();
@@ -240,68 +375,49 @@
       addLog('⚠️ 设备已断开');
     }
 
-    // ==================== 数据处理 ====================
-    function handlePressureData(event) {
-      const value = event.target.value;
-      // 4字节 float (小端)
-      const buffer = value.buffer;
-      const floatValue = new Float32Array(buffer)[0];
-      
-      // 根据当前单位决定显示精度
-      const activeUnit = document.querySelector('.unit-btn.active')?.dataset.unit || '0';
-      let displayValue;
-      if (activeUnit === '1') { // Pa 通常数值较大，1位小数
-        displayValue = floatValue.toFixed(1);
-      } else {
-        displayValue = floatValue.toFixed(3);
-      }
-      pressureValueEl.textContent = displayValue;
-    }
-
     // ==================== 单位切换 ====================
     unitButtons.forEach(btn => {
       btn.addEventListener('click', async () => {
-        const unitValue = parseInt(btn.dataset.unit);
-        updateUnitButtons(unitValue);
-        
+        const newUnit = parseInt(btn.dataset.unit);
+        currentUnit = newUnit;
+        updateUnitButtons(newUnit);
+        pressureUnitEl.textContent = UNIT_LABELS[newUnit]?.name || 'inH₂O';
+
+        // 切换单位后清空曲线，避免不同单位数据混淆，并用最新值重绘一个点
+        dataBuffer = [];
+        if (latestPressure !== undefined) {
+          dataBuffer.push({ value: latestPressure, timestamp: Date.now() });
+          pressureValueEl.textContent = (newUnit === 1) ? latestPressure.toFixed(1) : latestPressure.toFixed(3);
+        }
+        drawChart();
+
+        // 通知 ESP32 切换单位
         if (unitCharacteristic) {
           try {
-            const buffer = new ArrayBuffer(1);
-            const view = new DataView(buffer);
-            view.setUint8(0, unitValue);
-            await unitCharacteristic.writeValue(buffer);
-            
-            const label = UNIT_LABELS[unitValue]?.name || 'inH₂O';
-            pressureUnitEl.textContent = label;
-            addLog(`⚙️ 单位已切换为: ${label}`);
-          } catch (error) {
-            addLog(`❌ 单位切换失败: ${error.message}`);
+            const buf = new ArrayBuffer(1);
+            new DataView(buf).setUint8(0, newUnit);
+            await unitCharacteristic.writeValue(buf);
+            addLog(`⚙️ 单位已切换为: ${UNIT_LABELS[newUnit].name}`);
+          } catch (err) {
+            addLog(`❌ 单位切换失败: ${err.message}`);
           }
-        } else {
-          // 未连接时只切换本地显示
-          pressureUnitEl.textContent = UNIT_LABELS[unitValue]?.name || 'inH₂O';
         }
       });
     });
 
-    function updateUnitButtons(activeValue) {
-      unitButtons.forEach(btn => {
-        const val = parseInt(btn.dataset.unit);
-        btn.classList.toggle('active', val === activeValue);
+    function updateUnitButtons(active) {
+      unitButtons.forEach(b => {
+        b.classList.toggle('active', parseInt(b.dataset.unit) === active);
       });
-      const label = UNIT_LABELS[activeValue]?.name || 'inH₂O';
-      pressureUnitEl.textContent = label;
     }
 
     function updateConnectionUI() {
       if (isConnected) {
         connectButton.innerHTML = '<i class="fas fa-power-off"></i> 断开连接';
-        connectButton.classList.add('connected-state');
         connectionBadge.innerHTML = '<i class="fas fa-circle"></i> 已连接';
         connectionBadge.className = 'status-badge connected';
       } else {
         connectButton.innerHTML = '<i class="fas fa-bluetooth-b"></i> 连接设备';
-        connectButton.classList.remove('connected-state');
         connectionBadge.innerHTML = '<i class="fas fa-circle"></i> 未连接';
         connectionBadge.className = 'status-badge disconnected';
       }
