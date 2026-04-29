@@ -188,7 +188,8 @@
       try {
         addLog('🔍 正在搜索设备...');
         bluetoothDevice = await navigator.bluetooth.requestDevice({
-          filters: [{ name: 'RESP-MONITOR' }],
+          //filters: [{ name: 'RESP-MONITOR' }],
+          filters: [{ name: 'OxyMaster' }],  // 这里必须和 ESP32 里的名称一模一样
           optionalServices: [SERVICE_UUID]
         });
 
