@@ -101,8 +101,6 @@
     border:1px solid rgba(34,211,238,.22);
     display:flex;flex-direction:column;gap:12px;
   }
-  .pressure-main .k{font-size:11px;color:var(--muted);letter-spacing:.6px;
-    text-transform:uppercase;}
   .pressure-big{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:2px;}
   .pressure-val{font-family:ui-monospace,Menlo,Consolas,monospace;
     font-size:44px;font-weight:800;line-height:1;letter-spacing:-1.5px;
@@ -356,7 +354,6 @@
 
     <div class="pressure-layout">
       <div class="pressure-main">
-        <div class="k">Pressure</div>
         <div class="pressure-big">
           <span id="pressureValue" class="pressure-val">--.--</span>
           <span id="pressureUnitLabel" class="pressure-unit-label">inH₂O</span>
@@ -1366,7 +1363,7 @@
     for (let i = 0; i < others.length; i++) {
       const u = others[i];
       html += ' <span class="pc-val" style="color:' + valColor + '">' + fmtVal(u) + '</span>';
-      html += '<span class="pc-unit">' + UNIT_LABELS[u] + '</span>';
+      html += ' <span class="pc-unit">' + UNIT_LABELS[u] + '</span>';
     }
 
     pressureConv.innerHTML = html;
