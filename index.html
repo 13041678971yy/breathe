@@ -1061,7 +1061,7 @@
       connecting = false;
       setStatus('on', devName);
       deviceInfo.classList.remove('hidden');
-      deviceInfo.innerHTML = '设备名称：<b>' + esc(devName) + '</b><br>设备 ID：<code>' + esc(device.id) + '</code>';
+      deviceInfo.innerHTML = '设备名称：<b>' + esc(devName) + '</b>';
       setConnectedUI(true);
       rxBuffer = '';
       log('✅ 连接成功。', 'ok');
@@ -1363,7 +1363,7 @@
     for (let i = 0; i < others.length; i++) {
       const u = others[i];
       html += ' <span class="pc-val" style="color:' + valColor + '">' + fmtVal(u) + '</span>';
-      html += ' <span class="pc-unit">' + UNIT_LABELS[u] + '</span>';
+      html += '<span class="pc-unit">' + UNIT_LABELS[u] + '</span>';
     }
 
     pressureConv.innerHTML = html;
