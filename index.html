@@ -346,7 +346,6 @@
       <span id="authState" class="badge amber">🔒 未解锁 · 仅可观测数据</span>
     </div>
 
-    <div id="deviceInfo" class="device-info hidden"></div>
   </section>
 
   <section class="card">
@@ -614,7 +613,6 @@
 
   const statusDot  = $('statusDot');
   const statusText = $('statusText');
-  const deviceInfo = $('deviceInfo');
   const logEl      = $('log');
   const toastEl    = $('toast');
 
@@ -903,7 +901,6 @@
 
   function resetAllUI() {
     setStatus('off', '未连接');
-    deviceInfo.classList.add('hidden');
     setConnectedUI(false);
     pressureValue.textContent = '--.--';
     pressureValue.className = 'pressure-val';
@@ -1060,8 +1057,6 @@
 
       connecting = false;
       setStatus('on', devName);
-      deviceInfo.classList.remove('hidden');
-      deviceInfo.innerHTML = '设备名称：<b>' + esc(devName) + '</b>';
       setConnectedUI(true);
       rxBuffer = '';
       log('✅ 连接成功。', 'ok');
